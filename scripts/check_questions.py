@@ -9,7 +9,9 @@ def main() -> None:
     assert len(ids) == len(set(ids)), "question ids must be unique"
     assert data, "question bank cannot be empty"
     chapters = {item.get("chapter") for item in data}
-    assert len(chapters) >= 10, "v2 question bank should cover the full PDF structure"
+    assert len(chapters) >= 14, "v3 question bank should cover PDF chapters plus current affairs"
+    assert "14 时事政治" in chapters, "current affairs chapter is required"
+    assert len(data) >= 190, "v3 should include the 90-question current affairs markdown"
     kinds = {item["kind"] for item in data}
     assert {"single", "multiple", "blank"}.issubset(kinds), "single/multiple/blank are all required"
     for item in data:

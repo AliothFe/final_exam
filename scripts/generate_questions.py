@@ -1,4 +1,5 @@
 import json
+import re
 from pathlib import Path
 
 
@@ -170,8 +171,70 @@ def build():
     return items
 
 
+def parse_current_affairs_markdown(path: Path):
+    if not path.exists():
+        return []
+    text = path.read_text(encoding="utf-8")
+    lines = text.splitlines()
+    items = []
+    section = "时事政治"
+    pending = None
+    option_re = re.compile(r"^([A-D])\.\s*(.+?)\s*$")
+    question_re = re.compile(r"^\*\*(\d+)\.\*\*\s*(.+?)\s*$")
+    answer_re = re.compile(r"^\*\*答案：([A-D])\*\*")
+
+    def flush() -> None:
+        nonlocal pending
+        if not pending:
+            return
+        answer_letter = pending.get("answer")
+        options = pending.get("options", [])
+        if answer_letter and len(options) >= 4:
+            answer_index = ord(answer_letter) - ord("A")
+            items.append(
+                q(
+                    f"ca_{int(pending['number']):03d}",
+                    "14 时事政治",
+                    section,
+                    "single",
+                    pending["question"],
+                    f"来自《{path.name}》“{section}”，正确答案为 {answer_letter}。",
+                    options,
+                    [answer_index],
+                )
+            )
+        pending = None
+
+    for raw in lines:
+        line = raw.strip()
+        if line.startswith("## "):
+            flush()
+            section = re.sub(r"^##\s+", "", line)
+            continue
+        match = question_re.match(line)
+        if match:
+            flush()
+            pending = {"number": match.group(1), "question": match.group(2), "options": []}
+            continue
+        if not pending:
+            continue
+        option_match = option_re.match(line)
+        if option_match:
+            pending["options"].append(option_match.group(2).rstrip("  "))
+            continue
+        answer_match = answer_re.match(line)
+        if answer_match:
+            pending["answer"] = answer_match.group(1)
+            continue
+        if line and not line.startswith("---"):
+            pending["question"] += line
+    flush()
+    return items
+
+
 def main():
     data = build()
+    data.extend(parse_current_affairs_markdown(Path("时政选择题_挖空选填版.md")))
     Path("data/questions.json").write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"wrote {len(data)} questions")
 

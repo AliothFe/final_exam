@@ -248,15 +248,15 @@ class QuizApp:
         card = self.card(self.content.inner, padx=28, pady=24)
         tk.Label(
             card,
-            text="全量复习题库 v2.0.0",
+            text="全量复习题库 v3.0.0",
             bg="white",
             fg="#102a43",
             font=self.fonts["title"],
             anchor="w",
         ).pack(fill="x")
         intro = (
-            "题库已覆盖 PDF 的考情概览、九个高频专题、客观题速记、答题模板和背诵优先级。"
-            "基础版保留 v1 的单选/多选和错题集；进阶版把重点空改成填空题。"
+            "题库已覆盖 PDF 的考情概览、九个高频专题、客观题速记、答题模板和背诵优先级，"
+            "并新增时事政治 Markdown 题集。基础版保留 v1 的单选/多选和错题集；进阶版把重点空改成填空题。"
         )
         tk.Label(
             card,
@@ -597,7 +597,8 @@ def main() -> None:
     if "--self-test" in sys.argv:
         questions = load_questions()
         assert len(questions) >= 1
-        assert len({q.chapter for q in questions}) >= 10
+        assert len({q.chapter for q in questions}) >= 14
+        assert any(q.chapter == "14 时事政治" for q in questions)
         assert any(q.is_blank for q in questions)
         assert any(q.is_multiple for q in questions)
         assert any(q.kind == "single" for q in questions)
