@@ -12,7 +12,7 @@ from typing import Iterable
 from . import __version__
 
 
-APP_TITLE = "形势与政策 I 选择题练习"
+APP_TITLE = "形势与政策 I 复习答题程序"
 DATA_FILE = "questions.json"
 MISTAKES_FILE = "mistakes.json"
 
@@ -20,16 +20,26 @@ MISTAKES_FILE = "mistakes.json"
 @dataclass(frozen=True)
 class Question:
     id: str
+    chapter: str
     topic: str
     kind: str
     question: str
-    options: list[str]
+    options: list[str] | None
     answers: set[int]
+    blanks: list[str]
     explanation: str
 
     @property
     def is_multiple(self) -> bool:
         return self.kind == "multiple"
+
+    @property
+    def is_blank(self) -> bool:
+        return self.kind == "blank"
+
+    @property
+    def kind_label(self) -> str:
+        return {"single": "单选题", "multiple": "多选题", "blank": "填空题"}[self.kind]
 
 
 def app_root() -> Path:
@@ -58,11 +68,13 @@ def load_questions() -> list[Question]:
     questions = [
         Question(
             id=item["id"],
+            chapter=item["chapter"],
             topic=item["topic"],
             kind=item["kind"],
             question=item["question"],
-            options=item["options"],
-            answers=set(item["answers"]),
+            options=item.get("options"),
+            answers=set(item.get("answers", [])),
+            blanks=item.get("blanks", []),
             explanation=item["explanation"],
         )
         for item in raw
@@ -127,13 +139,16 @@ class QuizApp:
 
         self.questions = load_questions()
         self.question_map = {q.id: q for q in self.questions}
+        self.chapters = list(dict.fromkeys(q.chapter for q in self.questions))
         self.session: list[Question] = []
         self.index = 0
         self.current_selection: set[int] = set()
+        self.blank_entries: list[tk.Entry] = []
         self.session_wrong_ids: set[str] = set()
         self.session_answered = 0
         self.session_correct = 0
         self.mode = "all"
+        self.mode_label = "全部打乱练习"
         self.answered_current = False
 
         self._setup_fonts()
@@ -161,6 +176,7 @@ class QuizApp:
             "small": (family, 10),
             "button": (family, 12, "bold"),
             "option": (family, 12),
+            "input": (family, 12),
         }
 
     def _build_layout(self) -> None:
@@ -227,19 +243,20 @@ class QuizApp:
     def show_home(self) -> None:
         self.clear()
         wrong_count = len(load_mistake_ids())
+        choice_count = sum(1 for q in self.questions if not q.is_blank)
+        blank_count = sum(1 for q in self.questions if q.is_blank)
         card = self.card(self.content.inner, padx=28, pady=24)
         tk.Label(
             card,
-            text="高频专题一、二选择题练习",
+            text="全量复习题库 v2.0.0",
             bg="white",
             fg="#102a43",
             font=self.fonts["title"],
             anchor="w",
         ).pack(fill="x")
         intro = (
-            "题库来自 PDF 中“浙大校训精神与求是学子的使命”和"
-            "“当前国际格局、国家利益与中国特色大国外交”，并参考往年卷固定提法、"
-            "辨析题和挖空题的考法整理。"
+            "题库已覆盖 PDF 的考情概览、九个高频专题、客观题速记、答题模板和背诵优先级。"
+            "基础版保留 v1 的单选/多选和错题集；进阶版把重点空改成填空题。"
         )
         tk.Label(
             card,
@@ -255,7 +272,7 @@ class QuizApp:
         stats = self.card(self.content.inner)
         tk.Label(
             stats,
-            text=f"当前题库：{len(self.questions)} 题    错题集：{wrong_count} 题",
+            text=f"当前题库：{len(self.questions)} 题    基础选择：{choice_count} 题    进阶填空：{blank_count} 题    错题集：{wrong_count} 题",
             bg="white",
             fg="#243b53",
             font=self.fonts["body_bold"],
@@ -272,17 +289,56 @@ class QuizApp:
             justify="left",
         ).pack(fill="x", pady=(8, 0))
 
-        footer_left = tk.Frame(self.footer, bg="white")
-        footer_left.pack(side="left")
-        self.button(footer_left, "重新作答所有", lambda: self.start_quiz("all"), primary=True).pack(side="left", padx=(0, 12))
-        self.button(footer_left, "只做错题并覆盖", lambda: self.start_quiz("mistakes"), disabled=wrong_count == 0).pack(side="left")
+        mode_card = self.card(self.content.inner)
+        tk.Label(mode_card, text="练习模式", bg="white", fg="#102a43", font=self.fonts["body_bold"], anchor="w").pack(fill="x")
+        mode_row = tk.Frame(mode_card, bg="white")
+        mode_row.pack(fill="x", pady=(12, 0))
+        self.button(mode_row, "全部打乱练习", lambda: self.start_quiz("all"), primary=True).pack(side="left", padx=(0, 10), pady=4)
+        self.button(mode_row, "基础选择题", lambda: self.start_quiz("choices")).pack(side="left", padx=(0, 10), pady=4)
+        self.button(mode_row, "进阶填空题", lambda: self.start_quiz("blanks")).pack(side="left", padx=(0, 10), pady=4)
+        self.button(mode_row, "只做错题并覆盖", lambda: self.start_quiz("mistakes"), disabled=wrong_count == 0).pack(side="left", padx=(0, 10), pady=4)
+
+        chapter_card = self.card(self.content.inner)
+        tk.Label(chapter_card, text="分章节练习", bg="white", fg="#102a43", font=self.fonts["body_bold"], anchor="w").pack(fill="x")
+        for chapter in self.chapters:
+            count = sum(1 for q in self.questions if q.chapter == chapter)
+            row = tk.Frame(chapter_card, bg="white")
+            row.pack(fill="x", pady=5)
+            tk.Label(
+                row,
+                text=f"{chapter}（{count} 题）",
+                bg="white",
+                fg="#243b53",
+                font=self.fonts["body"],
+                anchor="w",
+                wraplength=620,
+                justify="left",
+            ).pack(side="left", fill="x", expand=True)
+            self.button(row, "本章练习", lambda ch=chapter: self.start_quiz("chapter", ch)).pack(side="right")
+
         self.button(self.footer, "退出", self.root.destroy).pack(side="right")
 
-    def start_quiz(self, mode: str) -> None:
+    def start_quiz(self, mode: str, chapter: str | None = None) -> None:
         self.mode = mode
+        labels = {
+            "all": "全部打乱练习",
+            "choices": "基础选择题",
+            "blanks": "进阶填空题",
+            "mistakes": "错题集覆盖练习",
+            "chapter": chapter or "分章节练习",
+        }
+        self.mode_label = labels.get(mode, "练习")
         if mode == "mistakes":
             mistake_ids = load_mistake_ids()
             self.session = [self.question_map[qid] for qid in mistake_ids if qid in self.question_map]
+            if mistake_ids and not self.session:
+                save_mistake_ids([])
+        elif mode == "choices":
+            self.session = [q for q in self.questions if not q.is_blank]
+        elif mode == "blanks":
+            self.session = [q for q in self.questions if q.is_blank]
+        elif mode == "chapter" and chapter:
+            self.session = [q for q in self.questions if q.chapter == chapter]
         else:
             self.session = list(self.questions)
         random.Random().shuffle(self.session)
@@ -299,19 +355,20 @@ class QuizApp:
         self.clear()
         self.answered_current = False
         self.current_selection = set()
+        self.blank_entries = []
         q = self.session[self.index]
         self.status_label.configure(
-            text=f"{self.index + 1}/{len(self.session)}    正确 {self.session_correct} / 已答 {self.session_answered}"
+            text=f"{self.mode_label}    {self.index + 1}/{len(self.session)}    正确 {self.session_correct} / 已答 {self.session_answered}"
         )
 
         topic = self.card(self.content.inner, padx=22, pady=14)
-        tk.Label(topic, text=q.topic, bg="white", fg="#486581", font=self.fonts["subtitle"], anchor="w").pack(fill="x")
+        tk.Label(topic, text=q.chapter, bg="white", fg="#102a43", font=self.fonts["body_bold"], anchor="w").pack(fill="x")
+        tk.Label(topic, text=q.topic, bg="white", fg="#486581", font=self.fonts["subtitle"], anchor="w").pack(fill="x", pady=(4, 0))
 
         question_card = self.card(self.content.inner, padx=26, pady=22)
-        kind_text = "多选题" if q.is_multiple else "单选题"
         tk.Label(
             question_card,
-            text=f"{kind_text}  {self.index + 1}. {q.question}",
+            text=f"{q.kind_label}  {self.index + 1}. {q.question}",
             bg="white",
             fg="#102a43",
             font=self.fonts["body_bold"],
@@ -320,49 +377,66 @@ class QuizApp:
             wraplength=920,
         ).pack(fill="x", pady=(0, 14))
 
-        self.option_vars: list[tk.IntVar] = []
-        letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-        for i, option in enumerate(q.options):
-            var = tk.IntVar(value=0)
-            self.option_vars.append(var)
-            if q.is_multiple:
-                widget = tk.Checkbutton(
-                    question_card,
-                    text=f"{letters[i]}. {option}",
-                    variable=var,
-                    command=self._sync_selection,
+        if q.is_blank:
+            for i, _answer in enumerate(q.blanks, start=1):
+                row = tk.Frame(question_card, bg="white")
+                row.pack(fill="x", pady=6)
+                tk.Label(
+                    row,
+                    text=f"第 {i} 空",
                     bg="white",
-                    fg="#243b53",
-                    activebackground="white",
-                    font=self.fonts["option"],
+                    fg="#486581",
+                    font=self.fonts["body"],
+                    width=8,
                     anchor="w",
-                    justify="left",
-                    wraplength=860,
-                    padx=10,
-                    pady=8,
-                    selectcolor="#dbeafe",
-                )
-            else:
-                widget = tk.Radiobutton(
-                    question_card,
-                    text=f"{letters[i]}. {option}",
-                    variable=var,
-                    value=1,
-                    command=lambda idx=i: self._select_single(idx),
-                    bg="white",
-                    fg="#243b53",
-                    activebackground="white",
-                    font=self.fonts["option"],
-                    anchor="w",
-                    justify="left",
-                    wraplength=860,
-                    padx=10,
-                    pady=8,
-                    selectcolor="#dbeafe",
-                )
-            widget.pack(fill="x", pady=2)
-
-        hint = "可选择多个答案" if q.is_multiple else "请选择一个答案"
+                ).pack(side="left")
+                entry = tk.Entry(row, font=self.fonts["input"], relief="solid", bd=1)
+                entry.pack(side="left", fill="x", expand=True, ipady=7)
+                self.blank_entries.append(entry)
+            hint = "按空填写关键词，标点和空格不会影响判定"
+        else:
+            self.option_vars: list[tk.IntVar] = []
+            letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+            for i, option in enumerate(q.options or []):
+                var = tk.IntVar(value=0)
+                self.option_vars.append(var)
+                if q.is_multiple:
+                    widget = tk.Checkbutton(
+                        question_card,
+                        text=f"{letters[i]}. {option}",
+                        variable=var,
+                        command=self._sync_selection,
+                        bg="white",
+                        fg="#243b53",
+                        activebackground="white",
+                        font=self.fonts["option"],
+                        anchor="w",
+                        justify="left",
+                        wraplength=860,
+                        padx=10,
+                        pady=8,
+                        selectcolor="#dbeafe",
+                    )
+                else:
+                    widget = tk.Radiobutton(
+                        question_card,
+                        text=f"{letters[i]}. {option}",
+                        variable=var,
+                        value=1,
+                        command=lambda idx=i: self._select_single(idx),
+                        bg="white",
+                        fg="#243b53",
+                        activebackground="white",
+                        font=self.fonts["option"],
+                        anchor="w",
+                        justify="left",
+                        wraplength=860,
+                        padx=10,
+                        pady=8,
+                        selectcolor="#dbeafe",
+                    )
+                widget.pack(fill="x", pady=2)
+            hint = "可选择多个答案" if q.is_multiple else "请选择一个答案"
         tk.Label(question_card, text=hint, bg="white", fg="#829ab1", font=self.fonts["small"], anchor="w").pack(fill="x", pady=(10, 0))
 
         self.feedback = self.card(self.content.inner, padx=22, pady=14)
@@ -380,16 +454,47 @@ class QuizApp:
     def _sync_selection(self) -> None:
         self.current_selection = {i for i, var in enumerate(self.option_vars) if var.get()}
 
+    @staticmethod
+    def normalize_answer(text: str) -> str:
+        table = str.maketrans({
+            "，": ",",
+            "。": ".",
+            "、": ",",
+            "；": ";",
+            "：": ":",
+            "（": "(",
+            "）": ")",
+            "“": "\"",
+            "”": "\"",
+            "‘": "'",
+            "’": "'",
+        })
+        normalized = text.translate(table).strip().lower()
+        return "".join(ch for ch in normalized if not ch.isspace())
+
+    def current_blank_answers(self) -> list[str]:
+        return [entry.get().strip() for entry in self.blank_entries]
+
     def submit_answer(self) -> None:
         if self.answered_current:
             return
-        self._sync_selection()
-        if not self.current_selection:
-            self.show_message("请先选择答案。", ok=False)
-            return
 
         q = self.session[self.index]
-        correct = self.current_selection == q.answers
+        if q.is_blank:
+            user_blanks = self.current_blank_answers()
+            if not any(user_blanks):
+                self.show_message("请先填写答案。", ok=False)
+                return
+            correct = len(user_blanks) == len(q.blanks) and all(
+                self.normalize_answer(got) == self.normalize_answer(expected)
+                for got, expected in zip(user_blanks, q.blanks)
+            )
+        else:
+            self._sync_selection()
+            if not self.current_selection:
+                self.show_message("请先选择答案。", ok=False)
+                return
+            correct = self.current_selection == q.answers
         self.session_answered += 1
         if correct:
             self.session_correct += 1
@@ -401,9 +506,15 @@ class QuizApp:
         self.button(self.footer, "下一题" if self.index + 1 < len(self.session) else "查看结果", self.next_question, primary=True).pack(side="right", padx=(0, 12))
 
     def feedback_text(self, q: Question, correct: bool) -> str:
-        letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-        answer = "、".join(f"{letters[i]}. {q.options[i]}" for i in sorted(q.answers))
-        selected = "、".join(f"{letters[i]}. {q.options[i]}" for i in sorted(self.current_selection))
+        if q.is_blank:
+            answer = "；".join(f"第 {i + 1} 空：{text}" for i, text in enumerate(q.blanks))
+            selected_values = self.current_blank_answers()
+            selected = "；".join(f"第 {i + 1} 空：{text or '未填写'}" for i, text in enumerate(selected_values))
+        else:
+            letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+            options = q.options or []
+            answer = "、".join(f"{letters[i]}. {options[i]}" for i in sorted(q.answers))
+            selected = "、".join(f"{letters[i]}. {options[i]}" for i in sorted(self.current_selection))
         status = "回答正确" if correct else "回答错误"
         return f"{status}\n你的答案：{selected}\n正确答案：{answer}\n解析：{q.explanation}"
 
@@ -465,7 +576,7 @@ class QuizApp:
                 q = self.question_map[qid]
                 tk.Label(
                     wrong_card,
-                    text=f"- {q.question}",
+                    text=f"- [{q.kind_label}] {q.question}",
                     bg="white",
                     fg="#486581",
                     font=self.fonts["body"],
@@ -474,7 +585,7 @@ class QuizApp:
                     wraplength=920,
                 ).pack(fill="x", pady=(8, 0))
 
-        self.button(self.footer, "重新作答所有", lambda: self.start_quiz("all"), primary=True).pack(side="left", padx=(0, 12))
+        self.button(self.footer, "全部打乱练习", lambda: self.start_quiz("all"), primary=True).pack(side="left", padx=(0, 12))
         self.button(self.footer, "做错题并覆盖", lambda: self.start_quiz("mistakes"), disabled=wrong == 0).pack(side="left")
         self.button(self.footer, "返回首页", self.show_home).pack(side="right")
 
@@ -486,8 +597,12 @@ def main() -> None:
     if "--self-test" in sys.argv:
         questions = load_questions()
         assert len(questions) >= 1
+        assert len({q.chapter for q in questions}) >= 10
+        assert any(q.is_blank for q in questions)
+        assert any(q.is_multiple for q in questions)
+        assert any(q.kind == "single" for q in questions)
         assert resource_path("data", DATA_FILE).exists()
         assert resource_path("assets", "NotoSansSC-VF.ttf").exists()
-        print(f"OK: {len(questions)} questions, resources ready")
+        print(f"OK: {len(questions)} questions, {len({q.chapter for q in questions})} chapters, resources ready")
         return
     QuizApp().run()
