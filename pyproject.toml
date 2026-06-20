@@ -1,0 +1,8 @@
+[project]
+name = "final-exam-quiz"
+version = "1.0.0"
+description = "形势与政策 I 高频专题选择题练习程序"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]

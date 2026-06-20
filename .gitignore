@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.venv/
+venv/
+build/
+user_data/
+dist/user_data/
+*.spec.bak
+review.txt
+past_exam.txt
